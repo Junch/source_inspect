@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
+        platform: [windows-latest]
         python-version: ["3.8", "3.10"]
 
     runs-on: ${{ matrix.platform }}
@@ -42,7 +42,7 @@ jobs:
         run: conda build conda.recipe
 
       - name: Install
-        run: conda install -c ${CONDA_PREFIX}/conda-bld/ cmake_example
+        run: conda install -c ${CONDA_PREFIX}/conda-bld/ source_inspect
 
       - name: Test
         run: python -m pytest
