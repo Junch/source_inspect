@@ -23,6 +23,7 @@ public:
     Inspect(DWORD pid);
     ~Inspect();
 
+    SymLineInfo GetLineFromAddr64(DWORD64 dwAddress);
     SymLineInfo GetLineFromSymName(PCWSTR pFunctionName);
 private:
     HANDLE m_hProcess;
@@ -45,7 +46,23 @@ Inspect::~Inspect()
     CloseHandle(m_hProcess);
 }
 
-SymLineInfo Inspect::GetLineFromSymName(PCWSTR pFunctionName)
+SymLineInfo Inspect::GetLineFromAddr64(DWORD64 dwAddress)
+{
+    SymLineInfo ret;
+
+    DWORD  dwDisplacement;
+    IMAGEHLP_LINEW64 line;
+    line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+    if (SymGetLineFromAddrW64(m_hProcess, dwAddress, &dwDisplacement, &line))
+    {
+        ret.FileName = line.FileName;
+        ret.LineNumber = line.LineNumber;
+    }
+
+    return ret;
+}
+
+SymLineInfo Inspect::GetLineFromSymName(PCWSTR pSymName)
 {
     SymLineInfo ret;
 
@@ -56,34 +73,25 @@ SymLineInfo Inspect::GetLineFromSymName(PCWSTR pFunctionName)
         sizeof(ULONG64)];
     PSYMBOL_INFOW pSymbol = (PSYMBOL_INFOW)buffer;
 
-    wcscpy_s(szSymbolName, MAX_SYM_NAME, pFunctionName);
+    wcscpy_s(szSymbolName, MAX_SYM_NAME, pSymName);
     pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
     pSymbol->MaxNameLen = MAX_SYM_NAME;
 
-    if (!SymFromNameW(m_hProcess, pFunctionName, pSymbol))
+    if (!SymFromNameW(m_hProcess, pSymName, pSymbol))
     {
         return ret;
     }
 
-    DWORD  dwDisplacement;
-    IMAGEHLP_LINEW64 line;
-    line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-    DWORD64 dwAddress = pSymbol->Address;
-    if (SymGetLineFromAddrW64(m_hProcess, dwAddress, &dwDisplacement, &line))
-    {
-        ret.FileName = line.FileName;
-        ret.LineNumber = line.LineNumber;
-    }
-
+    ret = GetLineFromAddr64(pSymbol->Address);
     return ret;
 }
 
-PYBIND11_MODULE(source_inspect, m) {
+PYBIND11_MODULE(sourceline, m) {
     m.doc() = R"pbdoc(
-        Pybind11 source_inspect plugin
+        Pybind11 sourceline plugin
         -----------------------
 
-        .. currentmodule:: source_inspect
+        .. currentmodule:: sourceline
 
         .. autosummary::
            :toctree: _generate
@@ -93,18 +101,19 @@ PYBIND11_MODULE(source_inspect, m) {
     )pbdoc";
 
     py::class_<SymLineInfo>(m, "SymLineInfo")
-    .def(py::init<>())
-    .def_readwrite("FileName", &SymLineInfo::FileName)
-    .def_readwrite("LineNumber", &SymLineInfo::LineNumber)
-    .def("__repr__", [](const SymLineInfo &a) {
-        std::wostringstream oss;
-        oss << "<SymLineInfo " <<  a.FileName << L":" << a.LineNumber << L">";
-        return oss.str();
-        });
+        .def(py::init<>())
+        .def_readwrite("FileName", &SymLineInfo::FileName)
+        .def_readwrite("LineNumber", &SymLineInfo::LineNumber)
+        .def("__repr__", [](const SymLineInfo &a) {
+            std::wostringstream oss;
+            oss << "<SymLineInfo " <<  a.FileName << L":" << a.LineNumber << L">";
+            return oss.str();
+         });
 
     py::class_<Inspect>(m, "Inspect")
-    .def(py::init<DWORD>())
-    .def("getLineFromSymName", &Inspect::GetLineFromSymName);
+        .def(py::init<DWORD>())
+        .def("GetLineFromAddr64", &Inspect::GetLineFromAddr64, "Get the file line from the address", py::arg("address"))
+        .def("getLineFromSymName", &Inspect::GetLineFromSymName, "Get the file line from the symbol name", py::arg("symName"));
 
     // m.def("add", &add, R"pbdoc(
     //     Add two numbers
