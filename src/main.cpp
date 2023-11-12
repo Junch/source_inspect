@@ -33,6 +33,7 @@ private:
 Inspect::Inspect(DWORD pid)
 {
     m_hProcess = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
     m_bInitialzed = SymInitialize(m_hProcess, NULL, TRUE);
 }
 
