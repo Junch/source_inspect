@@ -127,8 +127,8 @@ class CMakeBuild(build_ext):
 # logic and declaration, and simpler if you include description/version in a file.
 setup(
     name="sourceline",
-    version="0.0.2",
-    author="Dean Moldovan",
+    version="0.0.3",
+    author="Jun Chen",
     author_email="junc76@gmail.com",
     description="Query source line from the symbol name",
     long_description="",
