@@ -1,12 +1,55 @@
 #include <pybind11/pybind11.h>
 #include <windows.h>
 #include <string>
-#include <dbghelp.h>
+#include <Psapi.h>
 #include <sstream>
+#include <pathcch.h>
+#define DBGHELP_TRANSLATE_TCHAR
+#include <dbghelp.h>
 #pragma comment(lib,"dbghelp.lib")
+#pragma comment(lib,"pathcch.lib")
 
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
+
+std::wstring GetMainModulePath(HANDLE hProcess) {
+    WCHAR fullPath[MAX_PATH];
+    DWORD len = MAX_PATH - 1;
+    if (FAILED(::QueryFullProcessImageName(hProcess, 0, fullPath, &len))) {
+        return L""; // Unable to retrieve process image name
+    }
+
+    if (FAILED(::PathCchRemoveFileSpec(fullPath, MAX_PATH))) 
+    {
+        return L"";
+    }
+
+    return std::wstring(fullPath);
+}
+
+std::wstring GetLastErrorAsString()
+{
+    //Get the error message ID, if any.
+    DWORD errorMessageID = ::GetLastError();
+    if(errorMessageID == 0) {
+        return std::wstring(); //No error message has been recorded
+    }
+    
+    LPWSTR messageBuffer = nullptr;
+
+    //Ask Win32 to give us the string version of that message ID.
+    //The parameters we pass in, tell Win32 to create the buffer that holds the message for us (because we don't yet know how long the message string will be).
+    size_t size = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
+    
+    //Copy the error message into a std::string.
+    std::wstring message(messageBuffer, size);
+    
+    //Free the Win32's string's buffer.
+    LocalFree(messageBuffer);
+            
+    return message;
+}
 
 namespace py = pybind11;
 
@@ -32,9 +75,16 @@ private:
 
 Inspect::Inspect(DWORD pid)
 {
-    m_hProcess = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
-    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    m_hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES );
     m_bInitialzed = SymInitialize(m_hProcess, NULL, TRUE);
+
+    WCHAR path[MAX_PATH];
+    if (SymGetSearchPath(m_hProcess, path, MAX_PATH)) 
+    {
+        std::wstring szSearchPath = std::wstring(path) + L";" + GetMainModulePath(m_hProcess);
+        SymSetSearchPath(m_hProcess, szSearchPath.c_str());
+    }
 }
 
 Inspect::~Inspect()
@@ -59,13 +109,18 @@ SymLineInfo Inspect::GetLineFromAddr64(DWORD64 dwAddress)
         ret.FileName = line.FileName;
         ret.LineNumber = line.LineNumber;
     }
+    else 
+    {
+        auto szErr = std::wstring(L"SymGetLineFromAddrW64 ") + GetLastErrorAsString();
+        ::OutputDebugString(szErr.c_str());
+    }
 
     return ret;
 }
 
 SymLineInfo Inspect::GetLineFromSymName(PCWSTR pSymName)
 {
-    SymLineInfo ret;
+    SymLineInfo lineInfo;
 
     TCHAR szSymbolName[MAX_SYM_NAME];
     ULONG64 buffer[(sizeof(SYMBOL_INFOW) +
@@ -75,16 +130,20 @@ SymLineInfo Inspect::GetLineFromSymName(PCWSTR pSymName)
     PSYMBOL_INFOW pSymbol = (PSYMBOL_INFOW)buffer;
 
     wcscpy_s(szSymbolName, MAX_SYM_NAME, pSymName);
-    pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+    pSymbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
     pSymbol->MaxNameLen = MAX_SYM_NAME;
 
-    if (!SymFromNameW(m_hProcess, pSymName, pSymbol))
+    if (SymFromName(m_hProcess, pSymName, pSymbol))
     {
-        return ret;
+        lineInfo = GetLineFromAddr64(pSymbol->Address);
+    }
+    else
+    {
+        auto szErr = std::wstring(L"SymFromName ") + GetLastErrorAsString();
+        ::OutputDebugString(szErr.c_str());
     }
 
-    ret = GetLineFromAddr64(pSymbol->Address);
-    return ret;
+    return lineInfo;
 }
 
 PYBIND11_MODULE(sourceline, m) {
